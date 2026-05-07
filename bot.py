@@ -16,7 +16,8 @@ from telegram.ext import (
 # ──────────────────────────────────────────────
 # الإعدادات
 # ──────────────────────────────────────────────
-BOT_TOKEN = "8644512654:AAHaBSYGOi4SwazYGLqOeFFgZ7y3NMiFPZM"   # ← غيّر هذا
+import os
+BOT_TOKEN = os.getenv("BOT_TOKEN")غيّر هذا
 EXCEL_FILE = "students.xlsx"
 
 # حالات المحادثة
