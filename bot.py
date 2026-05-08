@@ -5,8 +5,8 @@ import logging
 import os
 from openpyxl import load_workbook
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
+from telegram.ext import Updater
+``
     CommandHandler,
     MessageHandler,
     ConversationHandler,
