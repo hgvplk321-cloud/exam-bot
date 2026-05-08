@@ -1,3 +1,2 @@
 python-telegram-bot==20.7
-pandas
-openpyxl
+openpyxl==3.1.2
