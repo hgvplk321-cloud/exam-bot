@@ -160,13 +160,13 @@ async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("اكتب: جدول\nللاستعلام عن جدول اختباراتك.")
     return ConversationHandler.END
  
- 
-def main():
+ def main():
     if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN environment variable is not set!")
- 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
- 
+        raise ValueError("BOT_TOKEN not set")
+
+    updater = Updater(BOT_TOKEN)
+    dp = updater.dispatcher
+
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("jadwal", request_schedule),
@@ -179,16 +179,15 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
- 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(conv_handler)
- 
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(conv_handler)
+
     logger.info("Bot is running...")
-    app.run_polling()
- 
- 
-if __name__ == "__main__":
-    main()
+    updater.start_polling()
+    updater.idle()
+``
+
 from flask import Flask
 import threading
 
