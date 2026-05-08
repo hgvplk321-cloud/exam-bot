@@ -1,3 +1,6 @@
+import sys
+import types
+sys.modules['imghdr'] = types.ModuleType('imghdr')
 import logging
 import os
 from openpyxl import load_workbook
