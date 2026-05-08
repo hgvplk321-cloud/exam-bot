@@ -1,8 +1,9 @@
-import sys
-import types
-sys.modules['imghdr'] = types.ModuleType('imghdr')
+
+Copy
+
 import logging
-import pandas as pd
+import os
+from openpyxl import load_workbook
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,195 +13,163 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-
-# ──────────────────────────────────────────────
-# الإعدادات
-# ──────────────────────────────────────────────
-import os
-BOT_TOKEN = os.getenv("BOT_TOKEN")غيّر هذا
+ 
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 EXCEL_FILE = "students.xlsx"
-
-# حالات المحادثة
 WAITING_ID = 1
-
+ 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
-
-
-# ──────────────────────────────────────────────
-# تحميل بيانات الإكسل
-# ──────────────────────────────────────────────
+ 
+ 
 def load_data():
-    """تحميل شيتات students و exam من ملف الإكسل"""
-    xl = pd.ExcelFile(EXCEL_FILE)
-
-    # شيت المتدربين
-    students_df = xl.parse("students")
-    students_df.columns = students_df.columns.str.strip()
-    students_df["رقم المتدرب"] = students_df["رقم المتدرب"].astype(str).str.strip()
-    students_df["الرقم المرجعي"] = students_df["الرقم المرجعي"].astype(str).str.strip()
-
-    # شيت الاختبارات (الصف الأول فاضي، الثاني هو العناوين)
-    exam_df = xl.parse("exam", header=1)
-    exam_df.columns = exam_df.columns.str.strip()
-    exam_df["الرقم المرجعي"] = exam_df["الرقم المرجعي"].astype(str).str.strip()
-
-    return students_df, exam_df
-
-
+    wb = load_workbook(EXCEL_FILE, read_only=True, data_only=True)
+ 
+    ws_s = wb["students"]
+    rows_s = list(ws_s.iter_rows(values_only=True))
+    headers_s = [str(h).strip() if h else "" for h in rows_s[0]]
+    students = []
+    for row in rows_s[1:]:
+        record = {headers_s[i]: (str(row[i]).strip() if row[i] is not None else "")
+                  for i in range(len(headers_s))}
+        students.append(record)
+ 
+    ws_e = wb["exam"]
+    rows_e = list(ws_e.iter_rows(values_only=True))
+    headers_e = [str(h).strip() if h else "" for h in rows_e[1]]
+    exams = []
+    for row in rows_e[2:]:
+        record = {headers_e[i]: (str(row[i]).strip() if row[i] is not None else "")
+                  for i in range(len(headers_e))}
+        exams.append(record)
+ 
+    wb.close()
+    return students, exams
+ 
+ 
 try:
-    students_df, exam_df = load_data()
-    logger.info(f"✅ تم تحميل البيانات: {len(students_df)} متدرب | {len(exam_df)} اختبار")
+    students_data, exams_data = load_data()
+    logger.info(f"Data loaded: {len(students_data)} students | {len(exams_data)} exams")
 except Exception as e:
-    logger.error(f"❌ خطأ في تحميل الإكسل: {e}")
+    logger.error(f"Excel load error: {e}")
     raise
-
-
-# ──────────────────────────────────────────────
-# دالة البحث عن جدول الاختبارات
-# ──────────────────────────────────────────────
+ 
+ 
 def get_schedule(student_id: str) -> str:
-    """
-    1. البحث عن المقررات المسجلة للمتدرب
-    2. البحث عن كل مقرر في جدول الاختبارات
-    3. تجميع الرسالة
-    """
-    sid = str(student_id).strip()
-    student_courses = students_df[students_df["رقم المتدرب"] == sid]
-
-    if student_courses.empty:
-        return "❌ لم يتم العثور على رقم تدريبي مطابق.\nتأكد من الرقم وأعد المحاولة."
-
-    student_name = student_courses["اسم المتدرب"].iloc[0]
-    lines = []
-    lines.append(f"🎓 *اسم المتدرب:* {student_name}")
-    lines.append(f"🔢 *الرقم التدريبي:* {sid}")
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
-    lines.append("📋 *جدول الاختبارات النهائي:*\n")
-
-    found_any = False
-
-    for _, row in student_courses.iterrows():
-        ref_num = str(row["الرقم المرجعي"]).strip()
-        course_name = str(row.get("المقرر", "")).strip()
-        exam_type = str(row.get("نوع الاختبار", "")).strip()
-        student_status = str(row.get("حالة المتدرب", "")).strip()
-        course_status = str(row.get("حالة المقرر", "")).strip()
-
-        # البحث في جدول الاختبارات
-        exam_rows = exam_df[exam_df["الرقم المرجعي"] == ref_num]
-
-        if exam_rows.empty:
-            # المقرر مسجل لكن ليس في جدول الاختبارات
-            lines.append(f"📚 *المقرر:* {course_name}")
-            lines.append(f"   🔖 الرقم المرجعي: {ref_num}")
-            lines.append(f"   📝 نوع الاختبار: {exam_type}")
-            lines.append(f"   👤 حالة المتدرب: {student_status}")
-            lines.append(f"   📌 حالة المقرر: {course_status}")
-            lines.append(f"   ⚠️ لا يوجد موعد في جدول الاختبارات")
-            lines.append("")
+    sid = student_id.strip()
+    student_courses = [r for r in students_data if r.get("رقم المتدرب", "") == sid]
+ 
+    if not student_courses:
+        return "لم يتم العثور على رقم تدريبي مطابق.\nتأكد من الرقم وأعد المحاولة."
+ 
+    student_name = student_courses[0].get("اسم المتدرب", "")
+    lines = [
+        f"اسم المتدرب: {student_name}",
+        f"الرقم التدريبي: {sid}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "جدول الاختبارات النهائي:",
+        "",
+    ]
+ 
+    for course in student_courses:
+        ref_num     = course.get("الرقم المرجعي", "").strip()
+        course_name = course.get("المقرر", "")
+        exam_type   = course.get("نوع الاختبار", "")
+        stu_status  = course.get("حالة المتدرب", "")
+        crs_status  = course.get("حالة المقرر", "")
+ 
+        exam_rows = [e for e in exams_data if e.get("الرقم المرجعي", "").strip() == ref_num]
+ 
+        if not exam_rows:
+            lines += [
+                f"المقرر: {course_name}",
+                f"الرقم المرجعي: {ref_num}",
+                f"نوع الاختبار: {exam_type}",
+                f"حالة المتدرب: {stu_status}",
+                f"حالة المقرر: {crs_status}",
+                "لا يوجد موعد في جدول الاختبارات",
+                "",
+            ]
         else:
-            found_any = True
-            for _, exam in exam_rows.iterrows():
-                date = str(exam.get("التاريخ", "")).strip()
-                day = str(exam.get("اليوم", "")).strip()
-                period = str(exam.get("الفترة", "")).strip()
-                location = str(exam.get("موقع اللجنة", "")).strip()
-                committee = str(exam.get("اللجنة", "")).strip()
-
-                # تجاهل صيغ XLOOKUP
-                if location.startswith("="):
-                    location = "—"
-
-                lines.append(f"📚 *المقرر:* {course_name}")
-                lines.append(f"   🔖 الرقم المرجعي: {ref_num}")
-                lines.append(f"   📅 التاريخ: {date}  |  {day}")
-                lines.append(f"   🕐 الفترة: {period}")
-                lines.append(f"   📍 موقع اللجنة: {location}")
-                lines.append(f"   🏷️ رقم اللجنة: {committee}")
-                lines.append(f"   👤 حالة المتدرب: {student_status}")
-                lines.append(f"   📌 حالة المقرر: {course_status}")
-                lines.append("")
-
-    if not lines[3:]:
-        lines.append("ℹ️ لا توجد مقررات مسجلة لهذا الرقم.")
-
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
-    lines.append("🏫 نظام جداول الاختبارات")
-
+            for exam in exam_rows:
+                date      = exam.get("التاريخ", "")
+                day       = exam.get("اليوم", "")
+                period    = exam.get("الفترة", "")
+                location  = exam.get("موقع اللجنة", "")
+                committee = exam.get("اللجنة", "")
+ 
+                if location.startswith("=") or not location:
+                    location = "غير محدد"
+ 
+                lines += [
+                    f"المقرر: {course_name}",
+                    f"الرقم المرجعي: {ref_num}",
+                    f"التاريخ: {date} | {day}",
+                    f"الفترة: {period}",
+                    f"موقع اللجنة: {location}",
+                    f"رقم اللجنة: {committee}",
+                    f"حالة المتدرب: {stu_status}",
+                    f"حالة المقرر: {crs_status}",
+                    "",
+                ]
+ 
+    lines += ["━━━━━━━━━━━━━━━━━━━━", "نظام جداول الاختبارات"]
     return "\n".join(lines)
-
-
-# ──────────────────────────────────────────────
-# handlers المحادثة
-# ──────────────────────────────────────────────
+ 
+ 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 *أهلاً بك في نظام جداول الاختبارات!*\n\n"
-        "أرسل /جدول للاستعلام عن جدول اختباراتك النهائي.",
-        parse_mode="Markdown",
+        "اهلا بك في نظام جداول الاختبارات\n\n"
+        "اكتب: جدول\n"
+        "للاستعلام عن جدول اختباراتك النهائي"
     )
-
-
+ 
+ 
 async def request_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🔢 *من فضلك، أدخل رقمك التدريبي:*",
-        parse_mode="Markdown",
-    )
+    await update.message.reply_text("من فضلك ادخل رقمك التدريبي:")
     return WAITING_ID
-
-
+ 
+ 
 async def receive_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     student_id = update.message.text.strip()
-
-    # التحقق أن المدخل رقمي
+ 
     if not student_id.isdigit():
-        await update.message.reply_text(
-            "⚠️ الرقم التدريبي يجب أن يكون أرقاماً فقط.\nأعد الإدخال:"
-        )
+        await update.message.reply_text("الرقم التدريبي يجب ان يكون ارقاما فقط. اعد الادخال:")
         return WAITING_ID
-
-    await update.message.reply_text("⏳ جاري البحث...")
-
+ 
+    await update.message.reply_text("جاري البحث...")
     result = get_schedule(student_id)
-    await update.message.reply_text(result, parse_mode="Markdown")
+    await update.message.reply_text(result)
     return ConversationHandler.END
-
-
+ 
+ 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ تم إلغاء الطلب.")
+    await update.message.reply_text("تم الغاء الطلب.")
     return ConversationHandler.END
-
-
+ 
+ 
 async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يستجيب للرسائل العامة"""
     text = update.message.text.strip()
     keywords = ["جدول", "اختبار", "جدولي", "مواعيد", "اختباراتي", "schedule"]
     if any(k in text for k in keywords):
-        await update.message.reply_text(
-            "🔢 *من فضلك، أدخل رقمك التدريبي:*",
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text("من فضلك ادخل رقمك التدريبي:")
         return WAITING_ID
-    await update.message.reply_text(
-        "أرسل /جدول للاستعلام عن جدول اختباراتك.\nأو أرسل /start للبداية."
-    )
+    await update.message.reply_text("اكتب: جدول\nللاستعلام عن جدول اختباراتك.")
     return ConversationHandler.END
-
-
-# ──────────────────────────────────────────────
-# تشغيل البوت
-# ──────────────────────────────────────────────
+ 
+ 
 def main():
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN environment variable is not set!")
+ 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
+ 
     conv_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("schedule", request_schedule),
-            CommandHandler("schedule", request_schedule),
+            CommandHandler("jadwal", request_schedule),
             MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_handler),
         ],
         states={
@@ -210,13 +179,13 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-
+ 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
-
-    logger.info("🚀 البوت يعمل...")
+ 
+    logger.info("Bot is running...")
     app.run_polling()
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
